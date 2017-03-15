@@ -193,10 +193,11 @@ def thread_create_train_childnet(np_chosen_classes):
 
 lstm = tf.contrib.rnn.BasicLSTMCell(D)
 # Initial state of the LSTM memory.
-state = tf.zeros([None, lstm.state_size])
+batch_size = 32
+state = lstm.zero_state(batch_size, tf.float32)
 probabilities = []
 loss = 0.0
-celloutput = tf.Variable(tf.zeros([None, D ]))
+celloutput = tf.Variable(tf.zeros([batch_size, D ]))
 layersizechosen = 50
 
 softmax_w = tf.Variable(tf.truncated_normal([D, layersizechosen],
@@ -205,8 +206,10 @@ softmax_w = tf.Variable(tf.truncated_normal([D, layersizechosen],
 softmax_b = tf.Variable(tf.zeros([layersizechosen]), name="softmaxb")
 
 for i in range(Maximum_layer_num):
+    if i > 0:
+        tf.get_variable_scope().reuse_variables()
     # The value of state is updated after processing each batch of words.
-    celloutput, state = lstm(celloutput, state)
+    celloutput, state = lstm(tf.identity(celloutput), state)
 
     # The LSTM output can be used to make next word predictions
     logits = tf.matmul(celloutput, softmax_w) + softmax_b
@@ -214,7 +217,7 @@ for i in range(Maximum_layer_num):
 
 chosen_classes = tf.placeholder(tf.int32, [Maximum_layer_num], name="chosen_classes")
 R              = tf.placeholder(tf.float32, name="R")
-objective = tf.reduced_sum(tf.log(probabilities[range(Maximum_layer_num), chosen_classes])) * R
+objective = tf.reduce_sum(tf.log(probabilities[range(Maximum_layer_num), chosen_classes])) * R
 adam = tf.train.AdamOptimizer(learning_rate=0.001)  # Our optimizer
 trainop = childadam.minimize(loss)
 # Launch the graph
