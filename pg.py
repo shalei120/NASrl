@@ -193,7 +193,7 @@ def thread_create_train_childnet(np_chosen_classes):
 
 lstm = tf.contrib.rnn.BasicLSTMCell(D)
 # Initial state of the LSTM memory.
-batch_size = 32
+batch_size = 1
 state = lstm.zero_state(batch_size, tf.float32)
 probabilities = []
 loss = 0.0
@@ -215,11 +215,17 @@ for i in range(Maximum_layer_num):
     logits = tf.matmul(celloutput, softmax_w) + softmax_b
     probabilities.append(tf.nn.softmax(logits))
 
-chosen_classes = tf.placeholder(tf.int32, [Maximum_layer_num], name="chosen_classes")
+stacked_probabilities = tf.stack(probabilities)[:,0,:]
+
+chosen_classes = tf.placeholder(tf.int32, [ Maximum_layer_num], name="chosen_classes")
 R              = tf.placeholder(tf.float32, name="R")
-objective = tf.reduce_sum(tf.log(probabilities[range(Maximum_layer_num), chosen_classes])) * R
+
+idx_flattened = tf.range(0, stacked_probabilities.shape[0]) * stacked_probabilities.shape[1] + chosen_classes
+y = tf.gather(tf.reshape(stacked_probabilities, [-1]),  # flatten input
+              idx_flattened)  # use flattened indice
+objective = tf.reduce_sum(tf.log(y)) * R
 adam = tf.train.AdamOptimizer(learning_rate=0.001)  # Our optimizer
-trainop = childadam.minimize(loss)
+trainop = adam.minimize(-objective)
 # Launch the graph
 with tf.Session() as sess:
     sess.run(init)
