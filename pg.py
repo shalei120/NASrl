@@ -93,6 +93,40 @@ def discount_rewards(r):
         running_add = running_add * gamma + r[t]
         discounted_r[t] = running_add
     return discounted_r
+def weight_variable(shape):
+    """Create a weight variable with appropriate initialization."""
+    initial = tf.truncated_normal(shape, stddev=0.1)
+    return tf.Variable(initial)
+
+
+def bias_variable(shape):
+    """Create a bias variable with appropriate initialization."""
+    initial = tf.constant(0.1, shape=shape)
+    return tf.Variable(initial)
+
+
+def nn_layer(input_tensor, input_dim, output_dim, layer_name, act=tf.nn.tanh):
+    """Reusable code for making a simple neural net layer.
+    It does a matrix multiply, bias add, and then uses relu to nonlinearize.
+    It also sets up name scoping so that the resultant graph is easy to read,
+    and adds a number of summary ops.
+    """
+    # Adding a name scope ensures logical grouping of the layers in the graph.
+    with tf.name_scope(layer_name):
+        # This Variable will hold the state of the weights for the layer
+        with tf.name_scope('weights'):
+            weights = weight_variable([input_dim, output_dim])
+            variable_summaries(weights)
+        with tf.name_scope('biases'):
+            biases = bias_variable([output_dim])
+            variable_summaries(biases)
+        with tf.name_scope('Wx_plus_b'):
+            preactivate = tf.matmul(input_tensor, weights) + biases
+            tf.summary.histogram('pre_activations', preactivate)
+        activations = act(preactivate, name='activation')
+        tf.summary.histogram('activations', activations)
+        return activations
+
 
 rewards = []
 def thread_create_train_childnet(np_chosen_classes):
@@ -100,6 +134,8 @@ def thread_create_train_childnet(np_chosen_classes):
         with tf.variable_scope("childDNN_", reuse=False):
             childinput_x = tf.placeholder(tf.float32, [None, len(features)], name="childinput_x")
             childinput_y = tf.placeholder(tf.int32, [None], name="childinput_y")
+            tf.summary.tensor_summary('child_x', childinput_x)
+            tf.summary.tensor_summary('child_y', childinput_y)
             childnsamples = childinput_y.shape[0]
             child_previous_layersize = len(features)
             childlayer = childinput_x
@@ -107,34 +143,16 @@ def thread_create_train_childnet(np_chosen_classes):
             # print tf.get_variable_scope()
             layer_sizes = []
             # child_params = []
+            np_chosen_classes = [10, 20, 10]
             for time_step, chosen_class in enumerate(np_chosen_classes):
                 layer_size = len(features) * (chosen_class + 1) / 10
                 layer_sizes.append(layer_size)
-                childW = tf.Variable(tf.truncated_normal([child_previous_layersize, layer_size],
-                                                         stddev=1.0 / math.sqrt(float(child_previous_layersize))),
-                                     name="W" + str(time_step))
-                childb = tf.Variable(tf.zeros([layer_size]), name="b" + str(time_step))
 
-                variable_summaries(childW)
-                variable_summaries(childb)
-
-                # child_params.append(childW)
-                # child_params.append(childmul)
-                childlayer = tf.tanh(tf.matmul(childlayer, childW) + childb)
-                # childlayer = tf.layers.dropout(childlayer)
+                childlayer = nn_layer(childlayer, child_previous_layersize, layer_size, 'layer' + str(time_step))
 
                 child_previous_layersize = layer_size
 
-            childoutW = tf.Variable(tf.truncated_normal([child_previous_layersize, 2],
-                                                        stddev=1.0 / math.sqrt(float(child_previous_layersize))),
-                                    name="Wout")
-            childoutb = tf.Variable(tf.zeros([2]), name="outb")
-
-            variable_summaries(childoutW)
-            variable_summaries(childoutb)
-
-            childscore = tf.matmul(childlayer, childoutW) + childoutb
-            # childprobability = tf.nn.softmax(childscore)
+            childscore = nn_layer(childlayer, child_previous_layersize, 2, 'layerout', act=tf.identity)
 
             # print(childscore, childinput_y)
             print layer_sizes
@@ -142,7 +160,7 @@ def thread_create_train_childnet(np_chosen_classes):
             childloglik = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=childscore, labels=childinput_y)
             # childloglik = tf.log(childprobability[tf.range(childbatch_size), childinput_y[:,0]])
 
-
+            tf.summary.tensor_summary('childloglik', childloglik)
 
             childloss = tf.reduce_mean(childloglik)
             tf.summary.scalar('loss', childloss)
