@@ -129,6 +129,8 @@ def nn_layer(input_tensor, input_dim, output_dim, layer_name, act=tf.nn.tanh):
 
 
 rewards = []
+chosen_cls = []
+lock = threading.Lock()
 def thread_create_train_childnet(np_chosen_classes):
     with tf.Session(graph=tf.Graph()) as childsess:
         with tf.variable_scope("childDNN_", reuse=False):
@@ -209,12 +211,17 @@ def thread_create_train_childnet(np_chosen_classes):
                 child_acc_epoch.append(childvalid_acc)
 
             reward = sum(child_acc_epoch) / len(child_acc_epoch)
+
+            lock.acquire()
+            chosen_cls.append(np_chosen_classes)
             rewards.append(reward)
+            lock.release()
+
             print reward
 
 lstm = tf.contrib.rnn.BasicLSTMCell(D)
 # Initial state of the LSTM memory.
-batch_size = 1
+batch_size = 32
 state = lstm.zero_state(batch_size, tf.float32)
 probabilities = []
 loss = 0.0
@@ -238,13 +245,14 @@ for i in range(Maximum_layer_num):
 
 stacked_probabilities = tf.stack(probabilities)[:,0,:]
 
-chosen_classes = tf.placeholder(tf.int32, [ Maximum_layer_num], name="chosen_classes")
-R              = tf.placeholder(tf.float32, name="R")
+chosen_classes = tf.placeholder(tf.int32, [batch_size, Maximum_layer_num], name="chosen_classes")
+R              = tf.placeholder(tf.float32,[batch_size,1], name="R")
 
 idx_flattened = tf.range(0, stacked_probabilities.shape[0]) * stacked_probabilities.shape[1] + chosen_classes
-y = tf.gather(tf.reshape(stacked_probabilities, [-1]),  # flatten input
-              idx_flattened)  # use flattened indice
-objective = tf.reduce_sum(tf.log(y)) * R
+y = tf.stack([tf.gather(tf.reshape(stacked_probabilities, [-1]),  # flatten input
+                        idxs)  # use flattened indice
+     for idxs in tf.unstack(idx_flattened)])
+objective = tf.reduce_mean(tf.reduce_sum(tf.log(y),axis = 1) * R)
 adam = tf.train.GradientDescentOptimizer(learning_rate=0.001)  # Our optimizer
 trainop = adam.minimize(-objective)
 # Launch the graph
@@ -254,11 +262,12 @@ with tf.Session() as sess:
 
     for epoch in range(100):
         threads = []
-        probs = sess.run(probabilities)
-        #print probs
-        np_chosen = [np.random.multinomial(1, prob[0]) for prob in probs]
-        np_chosen_classes = [np.argmax(chosen) for chosen in np_chosen]
-        threads.append(threading.Thread(target=thread_create_train_childnet, args=[np_chosen_classes]))
+        for batch in range(32):
+            probs = sess.run(probabilities)
+            #print probs
+            np_chosen = [np.random.multinomial(1, prob[0]) for prob in probs]
+            np_chosen_classes = [np.argmax(chosen) for chosen in np_chosen]
+            threads.append(threading.Thread(target=thread_create_train_childnet, args=[np_chosen_classes]))
 
         for t in threads:
             t.start()
@@ -268,12 +277,12 @@ with tf.Session() as sess:
 
         print rewards
         _, obj = sess.run([trainop,objective], feed_dict={
-            chosen_classes: np_chosen_classes,
-            R : rewards[0]
+            chosen_classes: np.asarray(np_chosen_cls),
+            R : np.asarray(rewards)
         })
 
         print '*****************************************************************'
-        print 'Epoch',epoch,'obj:',obj,'reward',rewards[0]
+        print 'Epoch',epoch,'obj:',obj,'reward',rewards
         print '*****************************************************************'
 
         reward = []
