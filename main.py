@@ -131,7 +131,7 @@ def nn_layer(input_tensor, input_dim, output_dim, layer_name, act=tf.nn.tanh):
 rewards = []
 chosen_cls = []
 lock = threading.Lock()
-def thread_create_train_childnet(np_chosen_classes):
+def thread_create_train_childnet(epoch,batch,np_chosen_classes):
     with tf.Session(graph=tf.Graph()) as childsess:
         with tf.variable_scope("childDNN_", reuse=False):
             childinput_x = tf.placeholder(tf.float32, [None, len(features)], name="childinput_x")
@@ -157,7 +157,9 @@ def thread_create_train_childnet(np_chosen_classes):
             childscore = nn_layer(childlayer, child_previous_layersize, 2, 'layerout', act=tf.identity)
 
             # print(childscore, childinput_y)
+            lock.require()
             print layer_sizes
+            lock.release()
 
             childloglik = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=childscore, labels=childinput_y)
             # childloglik = tf.log(childprobability[tf.range(childbatch_size), childinput_y[:,0]])
@@ -176,7 +178,7 @@ def thread_create_train_childnet(np_chosen_classes):
 
             tf.summary.scalar('accuracy', childaccuracy)
             merged = tf.summary.merge_all()
-            train_writer = tf.summary.FileWriter('./train', childsess.graph)
+            train_writer = tf.summary.FileWriter('../train', childsess.graph)
             childsess.run(tf.global_variables_initializer())
 
             # child_params = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='childRNN')
@@ -187,7 +189,7 @@ def thread_create_train_childnet(np_chosen_classes):
                     childinput_x: train_x[0: childbatch_size],
                     childinput_y: train_y[0: childbatch_size]
                 })'''
-
+            record = open('../records/epoch_'+str(epoch)+'_batch_'+str(batch)+'.txt','w')
             child_acc_epoch = []
             for childepoch in range(20):
                 batchloss = []
@@ -205,12 +207,14 @@ def thread_create_train_childnet(np_chosen_classes):
                 childvalid_acc = predict(childsess, childinput_x, childinput_y, childaccuracy, dev_x, dev_y,
                                          childvalidbatchnum)
 
-                print 'Child Epoch', childepoch, 'loss=', sum(batchloss) / len(
+                print>>record, 'Child Epoch', childepoch, 'loss=', sum(batchloss) / len(
                     batchloss), ': train ', childtrain_acc, 'valid ', childvalid_acc
 
                 child_acc_epoch.append(childvalid_acc)
 
             reward = sum(child_acc_epoch) / len(child_acc_epoch)
+
+            record.close()
 
             lock.acquire()
             chosen_cls.append(np_chosen_classes)
